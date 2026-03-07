@@ -193,7 +193,6 @@ const TRANSLATIONS = {
     month: 'Month',
     deleteSale: 'Delete Sale?',
     deleteSaleConfirm: 'Are you sure you want to delete this sale? The items will be returned to stock.',
-    cancel: 'Cancel',
     delete: 'Delete'
   },
   mm: {
@@ -302,7 +301,6 @@ const TRANSLATIONS = {
     month: 'လ',
     deleteSale: 'အရောင်းမှတ်တမ်း ဖျက်မည်',
     deleteSaleConfirm: 'ဒီအရောင်းမှတ်တမ်းကို ဖျက်မှာ သေချာပြီလား? ရောင်းရပစ္စည်းအရေအတွက်တွေ စာရင်းထဲ ပြန်ဝင်သွားပါမယ်။',
-    cancel: 'မလုပ်တော့ပါ',
     delete: 'ဖျက်မည်'
   }
 };
@@ -582,12 +580,24 @@ export default function App() {
             }}
             className="absolute right-[15%] top-[20%] w-24 h-24 [transform-style:preserve-3d]"
           >
-            <div className="absolute inset-0 bg-purple-500/40 backdrop-blur-sm border border-white/20 [transform:translateZ(48px)]" />
-            <div className="absolute inset-0 bg-indigo-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(180deg)_translateZ(48px)]" />
-            <div className="absolute inset-0 bg-violet-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(90deg)_translateZ(48px)]" />
-            <div className="absolute inset-0 bg-fuchsia-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(-90deg)_translateZ(48px)]" />
-            <div className="absolute inset-0 bg-purple-400/40 backdrop-blur-sm border border-white/20 [transform:rotateX(90deg)_translateZ(48px)]" />
-            <div className="absolute inset-0 bg-indigo-400/40 backdrop-blur-sm border border-white/20 [transform:rotateX(-90deg)_translateZ(48px)]" />
+            <div className="absolute inset-0 bg-purple-500/40 backdrop-blur-sm border border-white/20 [transform:translateZ(48px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={40} />
+            </div>
+            <div className="absolute inset-0 bg-indigo-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(180deg)_translateZ(48px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={40} />
+            </div>
+            <div className="absolute inset-0 bg-violet-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(90deg)_translateZ(48px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={40} />
+            </div>
+            <div className="absolute inset-0 bg-fuchsia-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(-90deg)_translateZ(48px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={40} />
+            </div>
+            <div className="absolute inset-0 bg-purple-400/40 backdrop-blur-sm border border-white/20 [transform:rotateX(90deg)_translateZ(48px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={40} />
+            </div>
+            <div className="absolute inset-0 bg-indigo-400/40 backdrop-blur-sm border border-white/20 [transform:rotateX(-90deg)_translateZ(48px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={40} />
+            </div>
           </motion.div>
 
           {/* Cube 2 - Small (Blue/Cyan) */}
@@ -600,12 +610,24 @@ export default function App() {
             }}
             className="absolute right-[25%] top-[45%] w-16 h-16 [transform-style:preserve-3d]"
           >
-            <div className="absolute inset-0 bg-blue-500/40 backdrop-blur-sm border border-white/20 [transform:translateZ(32px)]" />
-            <div className="absolute inset-0 bg-cyan-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(180deg)_translateZ(32px)]" />
-            <div className="absolute inset-0 bg-sky-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(90deg)_translateZ(32px)]" />
-            <div className="absolute inset-0 bg-teal-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(-90deg)_translateZ(32px)]" />
-            <div className="absolute inset-0 bg-blue-400/40 backdrop-blur-sm border border-white/20 [transform:rotateX(90deg)_translateZ(32px)]" />
-            <div className="absolute inset-0 bg-cyan-400/40 backdrop-blur-sm border border-white/20 [transform:rotateX(-90deg)_translateZ(32px)]" />
+            <div className="absolute inset-0 bg-blue-500/40 backdrop-blur-sm border border-white/20 [transform:translateZ(32px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={24} />
+            </div>
+            <div className="absolute inset-0 bg-cyan-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(180deg)_translateZ(32px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={24} />
+            </div>
+            <div className="absolute inset-0 bg-sky-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(90deg)_translateZ(32px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={24} />
+            </div>
+            <div className="absolute inset-0 bg-teal-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(-90deg)_translateZ(32px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={24} />
+            </div>
+            <div className="absolute inset-0 bg-blue-400/40 backdrop-blur-sm border border-white/20 [transform:rotateX(90deg)_translateZ(32px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={24} />
+            </div>
+            <div className="absolute inset-0 bg-cyan-400/40 backdrop-blur-sm border border-white/20 [transform:rotateX(-90deg)_translateZ(32px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={24} />
+            </div>
           </motion.div>
 
           {/* Cube 3 - Tiny (Pink/Rose) */}
@@ -618,12 +640,24 @@ export default function App() {
             }}
             className="absolute right-[8%] top-[60%] w-12 h-12 [transform-style:preserve-3d]"
           >
-            <div className="absolute inset-0 bg-pink-500/40 backdrop-blur-sm border border-white/20 [transform:translateZ(24px)]" />
-            <div className="absolute inset-0 bg-rose-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(180deg)_translateZ(24px)]" />
-            <div className="absolute inset-0 bg-red-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(90deg)_translateZ(24px)]" />
-            <div className="absolute inset-0 bg-orange-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(-90deg)_translateZ(24px)]" />
-            <div className="absolute inset-0 bg-pink-400/40 backdrop-blur-sm border border-white/20 [transform:rotateX(90deg)_translateZ(24px)]" />
-            <div className="absolute inset-0 bg-rose-400/40 backdrop-blur-sm border border-white/20 [transform:rotateX(-90deg)_translateZ(24px)]" />
+            <div className="absolute inset-0 bg-pink-500/40 backdrop-blur-sm border border-white/20 [transform:translateZ(24px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={16} />
+            </div>
+            <div className="absolute inset-0 bg-rose-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(180deg)_translateZ(24px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={16} />
+            </div>
+            <div className="absolute inset-0 bg-red-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(90deg)_translateZ(24px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={16} />
+            </div>
+            <div className="absolute inset-0 bg-orange-500/40 backdrop-blur-sm border border-white/20 [transform:rotateY(-90deg)_translateZ(24px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={16} />
+            </div>
+            <div className="absolute inset-0 bg-pink-400/40 backdrop-blur-sm border border-white/20 [transform:rotateX(90deg)_translateZ(24px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={16} />
+            </div>
+            <div className="absolute inset-0 bg-rose-400/40 backdrop-blur-sm border border-white/20 [transform:rotateX(-90deg)_translateZ(24px)] flex items-center justify-center text-white/50">
+              <ShoppingBag size={16} />
+            </div>
           </motion.div>
         </div>
 
