@@ -33,15 +33,19 @@ import {
   LogOut,
   Settings as SettingsIcon,
   Users,
-  Pencil
+  Pencil,
+  Printer,
+  FileText,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { collection, doc, setDoc, deleteDoc, updateDoc, writeBatch } from 'firebase/firestore';
+import { collection, doc, setDoc, deleteDoc, updateDoc, writeBatch, onSnapshot } from 'firebase/firestore';
 import { db } from './firebase';
 import { useFirebaseSync } from './firebase-hooks';
+import * as htmlToImage from 'html-to-image';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -61,6 +65,9 @@ interface Product {
   ram?: string;
   storage?: string;
   color?: string;
+  barcode?: string;
+  description?: string;
+  lastRestocked?: string;
 }
 
 interface SaleItem {
@@ -190,10 +197,26 @@ const TRANSLATIONS = {
     admin: 'Admin',
     staff: 'Staff',
     allMonths: 'All Months',
+    allDays: 'All Days',
     month: 'Month',
     deleteSale: 'Delete Sale?',
     deleteSaleConfirm: 'Are you sure you want to delete this sale? The items will be returned to stock.',
-    delete: 'Delete'
+    deleteProduct: 'Delete Product?',
+    deleteProductConfirm: 'Are you sure you want to delete this product? This action cannot be undone.',
+    clearCart: 'Clear Cart?',
+    clearCartConfirm: 'Are you sure you want to remove all items from the cart?',
+    delete: 'Delete',
+    receipt: 'Receipt',
+    print: 'Print',
+    close: 'Close',
+    thankYou: 'Thank you for your purchase!',
+    orderId: 'Order ID',
+    customerCopy: 'Customer Copy',
+    shopName: 'Z SHOP POS',
+    address: 'Yangon, Myanmar',
+    phone: '09-123456789',
+    barcode: 'Barcode',
+    description: 'Description'
   },
   mm: {
     dashboard: 'ပင်မစာမျက်နှာ',
@@ -298,10 +321,26 @@ const TRANSLATIONS = {
     admin: 'စီမံခန့်ခွဲသူ',
     staff: 'ဝန်ထမ်း',
     allMonths: 'လအားလုံး',
+    allDays: 'နေ့ရက်အားလုံး',
     month: 'လ',
     deleteSale: 'အရောင်းမှတ်တမ်း ဖျက်မည်',
     deleteSaleConfirm: 'ဒီအရောင်းမှတ်တမ်းကို ဖျက်မှာ သေချာပြီလား? ရောင်းရပစ္စည်းအရေအတွက်တွေ စာရင်းထဲ ပြန်ဝင်သွားပါမယ်။',
-    delete: 'ဖျက်မည်'
+    deleteProduct: 'ပစ္စည်း ဖျက်မည်',
+    deleteProductConfirm: 'ဒီပစ္စည်းကို ဖျက်မှာ သေချာပြီလား? ဖျက်ပြီးပါက ပြန်ယူ၍မရနိုင်ပါ။',
+    clearCart: 'ခြင်းတောင်း ရှင်းမည်',
+    clearCartConfirm: 'ခြင်းတောင်းထဲရှိ ပစ္စည်းအားလုံးကို ဖယ်ရှားမှာ သေချာပြီလား?',
+    delete: 'ဖျက်မည်',
+    receipt: 'ဘောက်ချာ',
+    print: 'ပရင့်ထုတ်မည်',
+    close: 'ပိတ်မည်',
+    thankYou: 'ဝယ်ယူအားပေးမှုကို ကျေးဇူးတင်ပါသည်!',
+    orderId: 'အော်ဒါနံပါတ်',
+    customerCopy: 'ဝယ်ယူသူမိတ္တူ',
+    shopName: 'Z SHOP POS',
+    address: 'ရန်ကုန်မြို့၊ မြန်မာနိုင်ငံ',
+    phone: '၀၉-၁၂၃၄၅၆၇၈၉',
+    barcode: 'ဘားကုဒ်',
+    description: 'အကြောင်းအရာ'
   }
 };
 
@@ -321,6 +360,11 @@ export default function App() {
   const [recoverySuccess, setRecoverySuccess] = useState(false);
 
   const [adminCredentials, setAdminCredentials] = useState({ username: 'admin', password: 'admin123' });
+  const [receiptSettings, setReceiptSettings] = useState({ 
+    shopName: 'Z SHOP POS', 
+    address: 'Yangon, Myanmar', 
+    phone: '09-123456789' 
+  });
   const [currentUser, setCurrentUser] = useState<{ username: string, role: 'admin' | 'staff' } | null>(() => {
     const saved = localStorage.getItem('pos_current_user');
     return saved ? JSON.parse(saved) : null;
@@ -356,8 +400,12 @@ export default function App() {
   // Cart state
   const [cart, setCart] = useState<{ [id: string]: number }>({});
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedMonth, setSelectedMonth] = useState<string>('all');
+  const [selectedDate, setSelectedDate] = useState<string>('');
   const [saleToDelete, setSaleToDelete] = useState<string | null>(null);
+  const [productToDelete, setProductToDelete] = useState<string | null>(null);
+  const [isClearCartConfirmOpen, setIsClearCartConfirmOpen] = useState(false);
+  const [lastSale, setLastSale] = useState<Sale | null>(null);
+  const [isReceiptOpen, setIsReceiptOpen] = useState(false);
   
   // Modal states
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
@@ -370,6 +418,16 @@ export default function App() {
 
   // Sync data with Firebase
   useFirebaseSync(setProducts, setSales, setCategories, setStaffAccounts, setAdminCredentials);
+
+  useEffect(() => {
+    const unsubSettings = onSnapshot(doc(db, 'settings', 'general'), (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (data.receiptSettings) setReceiptSettings(data.receiptSettings);
+      }
+    });
+    return () => unsubSettings();
+  }, []);
 
   // Persist data
   useEffect(() => {
@@ -423,13 +481,17 @@ export default function App() {
   }, [cartItems]);
 
   const filteredSales = useMemo(() => {
-    if (selectedMonth === 'all') return sales;
+    if (!selectedDate) return sales;
     return sales.filter(sale => {
       const date = new Date(sale.timestamp);
-      const monthStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      return monthStr === selectedMonth;
+      // Format date to local YYYY-MM-DD
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const dateStr = `${year}-${month}-${day}`;
+      return dateStr === selectedDate;
     });
-  }, [sales, selectedMonth]);
+  }, [sales, selectedDate]);
 
   const historyStats = useMemo(() => {
     const totalSales = filteredSales.reduce((sum, s) => sum + s.totalAmount, 0);
@@ -438,13 +500,16 @@ export default function App() {
     return { totalSales, totalProfit };
   }, [filteredSales]);
 
-  const availableMonths = useMemo(() => {
-    const months = new Set<string>();
+  const availableDates = useMemo(() => {
+    const dates = new Set<string>();
     sales.forEach(sale => {
       const date = new Date(sale.timestamp);
-      months.add(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      dates.add(`${year}-${month}-${day}`);
     });
-    return Array.from(months).sort().reverse();
+    return Array.from(dates).sort().reverse();
   }, [sales]);
 
   // --- Handlers ---
@@ -457,6 +522,11 @@ export default function App() {
       ...prev,
       [productId]: (prev[productId] || 0) + 1
     }));
+
+    // Trigger a small haptic-like feedback or animation
+    if (window.navigator.vibrate) {
+      window.navigator.vibrate(10);
+    }
   };
 
   const removeFromCart = (productId: string) => {
@@ -469,6 +539,33 @@ export default function App() {
       }
       return newCart;
     });
+  };
+
+  const printCart = () => {
+    if (cartItems.length === 0) return;
+
+    const totalAmount = cartTotal;
+    const totalCost = cartItems.reduce((sum, item) => sum + (item.product.cost * item.qty), 0);
+    const profit = totalAmount - totalCost;
+
+    const draftSaleId = "DRAFT-" + Math.random().toString(36).substr(2, 6).toUpperCase();
+    const draftSale: Sale = {
+      id: draftSaleId,
+      timestamp: Date.now(),
+      items: cartItems.map(item => ({
+        productId: item.product.id,
+        name: item.product.name,
+        quantity: item.qty,
+        price: item.product.price,
+        cost: item.product.cost
+      })),
+      totalAmount,
+      totalCost,
+      profit
+    };
+
+    setLastSale(draftSale);
+    setIsReceiptOpen(true);
   };
 
   const checkout = async () => {
@@ -508,10 +605,11 @@ export default function App() {
         });
       });
 
-      await batch.commit();
-      
+      // Optimistic update for faster UI response
+      setLastSale(newSale);
       setCart({});
-      alert('ရောင်းချမှု အောင်မြင်ပါသည်။');
+
+      await batch.commit();
     } catch (error) {
       console.error("Error during checkout:", error);
       alert("Error during checkout. Please try again.");
@@ -522,7 +620,8 @@ export default function App() {
     const newProductId = Math.random().toString(36).substr(2, 9);
     const newProduct: Product = {
       ...product,
-      id: newProductId
+      id: newProductId,
+      lastRestocked: new Date().toISOString()
     };
     try {
       await setDoc(doc(db, 'products', newProductId), newProduct);
@@ -536,7 +635,12 @@ export default function App() {
   const updateProduct = async (product: Omit<Product, 'id'>) => {
     if (!editingProduct) return;
     try {
-      await updateDoc(doc(db, 'products', editingProduct.id), product);
+      const updateData: Partial<Product> = { ...product };
+      // If stock increased, update lastRestocked
+      if (product.stock > editingProduct.stock) {
+        updateData.lastRestocked = new Date().toISOString();
+      }
+      await updateDoc(doc(db, 'products', editingProduct.id), updateData);
       setEditingProduct(null);
     } catch (error) {
       console.error("Error updating product:", error);
@@ -552,7 +656,7 @@ export default function App() {
 
   const filteredProducts = products.filter(p => {
     const searchableText = normalizeText(
-      `${p.name} ${p.category} ${p.ram || ''} ${p.storage || ''} ${p.color || ''} ${p.price}`
+      `${p.name} ${p.category} ${p.ram || ''} ${p.storage || ''} ${p.color || ''} ${p.price} ${p.barcode || ''} ${p.description || ''}`
     );
 
     return searchTerms.every(term => searchableText.includes(term));
@@ -658,6 +762,17 @@ export default function App() {
             <div className="absolute inset-0 bg-rose-400/40 backdrop-blur-sm border border-white/20 [transform:rotateX(-90deg)_translateZ(24px)] flex items-center justify-center text-white/50">
               <ShoppingBag size={16} />
             </div>
+          </motion.div>
+        </div>
+
+        {/* Moving Shopping Cart */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+          <motion.div
+            animate={{ x: ['-20vw', '120vw'] }}
+            transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
+            className="absolute bottom-10 left-0 text-white/10"
+          >
+            <ShoppingCart size={160} />
           </motion.div>
         </div>
 
@@ -849,6 +964,12 @@ export default function App() {
             )}
           </div>
         </motion.div>
+
+        <div className="absolute bottom-6 left-0 right-0 text-center z-10">
+          <p className="text-xs text-slate-500 font-medium tracking-wider uppercase">
+            Developed by <span className="text-slate-300 font-bold">Zin Ko Ko Aung</span>
+          </p>
+        </div>
       </div>
     );
   }
@@ -891,6 +1012,7 @@ export default function App() {
               label={t.dashboard} 
               active={activeTab === 'dashboard'} 
               onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} 
+              badge={products.filter(p => p.stock < 10).length}
             />
           )}
           <SidebarItem 
@@ -905,6 +1027,7 @@ export default function App() {
               label={t.products} 
               active={activeTab === 'products'} 
               onClick={() => { setActiveTab('products'); setIsSidebarOpen(false); }} 
+              badge={products.filter(p => p.stock < 10).length}
             />
           )}
           <SidebarItem 
@@ -926,25 +1049,6 @@ export default function App() {
         <div className="p-4 space-y-4 border-t border-white/10">
           <div className="space-y-2">
             <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest px-2">{t.settings}</p>
-            
-            <div className="flex items-center justify-between px-2 py-1">
-              <span className="text-xs font-medium text-white/70 flex items-center gap-2">
-                {darkMode ? <Moon size={14} /> : <Sun size={14} />}
-                {darkMode ? t.darkMode : t.lightMode}
-              </span>
-              <button 
-                onClick={() => setDarkMode(!darkMode)}
-                className={cn(
-                  "w-10 h-5 rounded-full relative transition-colors duration-200",
-                  darkMode ? "bg-slate-500" : "bg-white/20"
-                )}
-              >
-                <div className={cn(
-                  "absolute top-1 w-3 h-3 bg-white rounded-full transition-transform duration-200 shadow-md",
-                  darkMode ? "translate-x-6" : "translate-x-1"
-                )} />
-              </button>
-            </div>
 
             <div className="flex items-center justify-between px-2 py-1">
               <span className="text-xs font-medium text-white/70 flex items-center gap-2">
@@ -995,6 +1099,15 @@ export default function App() {
             <LogOut size={16} />
             {t.logout}
           </button>
+
+          <div className="mt-6 text-center border-t border-white/10 pt-4">
+            <p className="text-[10px] text-white/40 font-medium tracking-wider uppercase">
+              Developed by
+            </p>
+            <p className="text-xs text-white/70 font-bold tracking-wide mt-0.5">
+              Zin Ko Ko Aung
+            </p>
+          </div>
         </div>
       </aside>
 
@@ -1135,70 +1248,75 @@ export default function App() {
               >
                 {/* Product Selection */}
                 <div className="flex-1 space-y-6 overflow-y-auto pr-0 lg:pr-2">
-                  <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 lg:gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
                     {filteredProducts.map(product => (
-                      <button 
+                      <motion.button 
                         key={product.id}
+                        layout
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        whileHover={{ y: -5 }}
+                        whileTap={{ scale: 0.98 }}
                         onClick={() => addToCart(product.id)}
                         disabled={product.stock === 0}
                         className={cn(
-                          "bg-white dark:bg-slate-800 p-2 rounded-2xl border-2 border-b-[4px] border-r-[4px] border-slate-300 dark:border-slate-700 text-left group relative flex flex-col transition-all duration-200",
-                          product.stock > 0 && "hover:-translate-y-0.5 hover:translate-x-[-0.5px] hover:border-b-[6px] hover:border-r-[6px] hover:border-indigo-300 dark:hover:border-indigo-600 active:border-b-[2px] active:border-r-[2px] active:translate-y-[2px] active:translate-x-[2px]",
-                          product.stock === 0 && "opacity-60 grayscale cursor-not-allowed border-b-[2px] border-r-[2px] translate-y-[2px] translate-x-[2px]"
+                          "bg-white dark:bg-slate-900 p-2 rounded-2xl border border-slate-200 dark:border-slate-800 text-left group relative flex flex-col transition-all duration-200 shadow-sm hover:shadow-lg hover:border-indigo-500/50 dark:hover:border-indigo-500/50",
+                          product.stock === 0 && "opacity-60 grayscale cursor-not-allowed"
                         )}
                       >
-                        <div className="aspect-square bg-slate-50 dark:bg-slate-900 rounded-xl mb-2 overflow-hidden relative w-full border-2 border-slate-200 dark:border-slate-800">
+                        <div className="aspect-square bg-slate-100 dark:bg-slate-800 rounded-xl mb-1.5 overflow-hidden relative w-full border border-slate-100 dark:border-slate-700">
                           {product.image ? (
-                            <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
+                            <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" referrerPolicy="no-referrer" />
                           ) : (
-                            <div className="w-full h-full flex items-center justify-center text-slate-300 dark:text-slate-700">
-                              <ImageIcon size={24} />
+                            <div className="w-full h-full flex items-center justify-center text-slate-300 dark:text-slate-600">
+                              <ImageIcon size={28} />
                             </div>
                           )}
                         </div>
-                        <div className="px-0.5 pb-0.5 w-full flex flex-col flex-1">
-                          <h4 className="font-bold text-slate-900 dark:text-white text-xs sm:text-sm mb-1 truncate tracking-tight">{product.name}</h4>
-                          <div className="flex flex-wrap gap-1 mb-1.5">
-                            {product.ram && (
-                              <span className="text-[9px] font-medium px-1 py-0.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded border border-slate-200 dark:border-slate-600">
-                                {product.ram}
-                              </span>
-                            )}
-                            {product.storage && (
-                              <span className="text-[9px] font-medium px-1 py-0.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded border border-slate-200 dark:border-slate-600">
-                                {product.storage}
-                              </span>
-                            )}
-                            {product.color && (
-                              <span className="text-[9px] font-medium px-1 py-0.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded border border-slate-200 dark:border-slate-600">
-                                {product.color}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-1 mt-auto">
-                            <p className="text-slate-700 dark:text-slate-300 font-black text-xs sm:text-sm">{product.price.toLocaleString()} MMK</p>
+                        <div className="px-0.5 flex flex-col flex-1 min-h-0">
+                          <h4 className="font-bold text-slate-800 dark:text-slate-100 text-sm leading-tight mb-0.5 line-clamp-2 h-8" title={product.name}>{product.name}</h4>
+                          
+                          <div className="flex items-center justify-between mb-1">
+                            <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider truncate">{product.category}</p>
                             <span className={cn(
-                              "text-[9px] px-1.5 py-0.5 rounded-md font-bold w-fit border",
+                              "text-[9px] px-1.5 py-0.5 rounded-md font-bold",
                               product.stock > 10 
-                                ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800" 
-                                : "bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-amber-200 dark:border-amber-800"
+                                ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400" 
+                                : "bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400"
                             )}>
-                              {product.stock} {t.inStock}
+                              {product.stock} {t.left}
                             </span>
+                          </div>
+                          
+                          {(product.ram || product.storage || product.color) && (
+                            <div className="flex flex-wrap gap-1 mb-1">
+                              {product.ram && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-md font-medium">{product.ram}</span>}
+                              {product.storage && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-md font-medium">{product.storage}</span>}
+                              {product.color && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-md font-medium">{product.color}</span>}
+                            </div>
+                          )}
+                          
+                          <div className="flex items-center justify-between mt-auto pt-1.5 border-t border-slate-100 dark:border-slate-800/50">
+                            <p className="text-indigo-600 dark:text-indigo-400 font-extrabold text-base">
+                              {product.price.toLocaleString()} <span className="text-[10px] font-bold text-indigo-400 dark:text-indigo-500">MMK</span>
+                            </p>
+                            <div className="w-7 h-7 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-400 group-hover:bg-indigo-600 group-hover:text-white transition-all duration-200 shadow-sm">
+                              <Plus size={16} strokeWidth={3} />
+                            </div>
                           </div>
                         </div>
                         {product.stock === 0 && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-white/40 dark:bg-slate-900/40 backdrop-blur-[2px] rounded-2xl">
-                            <span className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-[10px] lg:text-xs px-4 py-1.5 rounded-lg font-black uppercase tracking-widest shadow-sm">{t.outOfStock}</span>
+                          <div className="absolute inset-0 flex items-center justify-center bg-white/50 dark:bg-slate-900/50 backdrop-blur-[1px] rounded-2xl z-10">
+                            <span className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-[10px] px-3 py-1.5 rounded-full font-bold uppercase tracking-wider shadow-lg transform -rotate-6">{t.outOfStock}</span>
                           </div>
                         )}
-                      </button>
+                      </motion.button>
                     ))}
                   </div>
                   {filteredProducts.length === 0 && (
                     <div className="text-center py-20">
                       <Package className="mx-auto text-slate-200 dark:text-slate-800 mb-4" size={64} />
-                      <p className="text-slate-500 dark:text-slate-400">{t.noProductsFound}</p>
+                      <p className="text-slate-500 dark:text-slate-400 font-medium">{t.noProductsFound}</p>
                     </div>
                   )}
                 </div>
@@ -1210,9 +1328,12 @@ export default function App() {
                     cartTotal={cartTotal} 
                     onRemove={removeFromCart} 
                     onAdd={addToCart} 
-                    onClear={() => setCart({})} 
+                    onClear={() => setIsClearCartConfirmOpen(true)} 
                     onCheckout={checkout} 
                     t={t}
+                    lastSale={lastSale}
+                    onViewReceipt={() => setIsReceiptOpen(true)}
+                    onPrintCart={printCart}
                   />
                 </div>
 
@@ -1249,9 +1370,12 @@ export default function App() {
                             cartTotal={cartTotal} 
                             onRemove={removeFromCart} 
                             onAdd={addToCart} 
-                            onClear={() => setCart({})} 
+                            onClear={() => setIsClearCartConfirmOpen(true)} 
                             onCheckout={() => { checkout(); setIsCartOpen(false); }} 
                             t={t}
+                            lastSale={lastSale}
+                            onViewReceipt={() => setIsReceiptOpen(true)}
+                            onPrintCart={printCart}
                           />
                         </div>
                       </motion.div>
@@ -1290,6 +1414,7 @@ export default function App() {
                           <th className="px-6 py-4 text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider">{t.cost}</th>
                           <th className="px-6 py-4 text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider">{t.price}</th>
                           <th className="px-6 py-4 text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider">{t.stock}</th>
+                          <th className="px-6 py-4 text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider">Restocked</th>
                           <th className="px-6 py-4 text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider">{t.profitUnit}</th>
                           <th className="px-6 py-4 text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider text-right">{t.actions}</th>
                         </tr>
@@ -1334,6 +1459,20 @@ export default function App() {
                               </span>
                             </td>
                             <td className="px-6 py-4">
+                              {product.lastRestocked ? (
+                                <div className="flex flex-col">
+                                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                                    {new Date(product.lastRestocked).toLocaleDateString(language === 'mm' ? 'my-MM' : 'en-US')}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                                    {new Date(product.lastRestocked).toLocaleTimeString(language === 'mm' ? 'my-MM' : 'en-US', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-sm text-slate-400 dark:text-slate-500">-</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4">
                               <span className="text-emerald-600 dark:text-emerald-400 font-medium text-sm">
                                 +{(product.price - product.cost).toLocaleString()}
                               </span>
@@ -1355,13 +1494,7 @@ export default function App() {
                                   <Plus size={16} />
                                 </button>
                                 <button 
-                                  onClick={async () => {
-                                    try {
-                                      await deleteDoc(doc(db, 'products', product.id));
-                                    } catch (error) {
-                                      console.error("Error deleting product:", error);
-                                    }
-                                  }}
+                                  onClick={() => setProductToDelete(product.id)}
                                   className="p-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-md hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors border border-red-200 dark:border-red-800/50"
                                 >
                                   <Trash2 size={16} />
@@ -1394,19 +1527,26 @@ export default function App() {
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-widest">{t.salesHistory}</h3>
                   <div className="flex flex-wrap items-center gap-3">
-                    <select
-                      value={selectedMonth}
-                      onChange={(e) => setSelectedMonth(e.target.value)}
-                      className="px-4 py-3 bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-none neo-3d text-sm font-bold text-slate-900 dark:text-white focus:ring-0 focus:border-indigo-500 outline-none cursor-pointer"
+                    <div className="relative">
+                      <input
+                        type="date"
+                        value={selectedDate}
+                        onChange={(e) => setSelectedDate(e.target.value)}
+                        className="px-4 py-3 bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-none neo-3d text-sm font-bold text-slate-900 dark:text-white focus:ring-0 focus:border-indigo-500 outline-none cursor-pointer"
+                      />
+                      {!selectedDate && (
+                        <div className="absolute inset-0 bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-none neo-3d flex items-center px-4 pointer-events-none">
+                          <span className="text-sm font-bold text-slate-900 dark:text-white">{t.allDays}</span>
+                        </div>
+                      )}
+                    </div>
+                    <button 
+                      onClick={() => setSelectedDate('')}
+                      className="px-4 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-none neo-3d hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-sm font-bold"
+                      title="Clear Filter"
                     >
-                      <option value="all">{t.allMonths}</option>
-                      {availableMonths.map(month => {
-                        const [year, m] = month.split('-');
-                        const date = new Date(parseInt(year), parseInt(m) - 1);
-                        const monthName = date.toLocaleString(language === 'mm' ? 'my-MM' : 'en-US', { month: 'long', year: 'numeric' });
-                        return <option key={month} value={month}>{monthName}</option>;
-                      })}
-                    </select>
+                      <X size={18} />
+                    </button>
                     <div className="glass-panel px-6 py-3 rounded-none neo-3d border-t border-indigo-500/20 flex items-center gap-3">
                       <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-black tracking-widest">{t.totalSales}:</span>
                       <span className="font-black text-slate-700 dark:text-slate-300 text-sm">{historyStats.totalSales.toLocaleString()} MMK</span>
@@ -1459,13 +1599,25 @@ export default function App() {
                               <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-black uppercase tracking-widest">{t.profit}: +{sale.profit.toLocaleString()}</p>
                             )}
                           </div>
-                          <button 
-                            onClick={() => setSaleToDelete(sale.id)}
-                            className="p-3 bg-red-50 dark:bg-red-500/10 text-red-500 rounded-none hover:bg-red-500 hover:text-white transition-all neo-3d"
-                            title="Delete sale and restore stock"
-                          >
-                            <Trash2 size={18} />
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button 
+                              onClick={() => {
+                                setLastSale(sale);
+                                setIsReceiptOpen(true);
+                              }}
+                              className="p-3 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-500 rounded-none hover:bg-indigo-500 hover:text-white transition-all neo-3d"
+                              title="View Receipt"
+                            >
+                              <Printer size={18} />
+                            </button>
+                            <button 
+                              onClick={() => setSaleToDelete(sale.id)}
+                              className="p-3 bg-red-50 dark:bg-red-500/10 text-red-500 rounded-none hover:bg-red-500 hover:text-white transition-all neo-3d"
+                              title="Delete sale and restore stock"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1554,6 +1706,64 @@ export default function App() {
                         {t.saveChanges}
                       </button>
                     </div>
+                  </form>
+                </div>
+
+
+
+                {/* Receipt Customization */}
+                <div className="glass-panel p-8 rounded-2xl neo-3d border-t-2 border-slate-500/20 mt-8">
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center text-slate-700 dark:text-slate-300">
+                      <ShoppingBag size={20} />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-900 dark:text-white uppercase tracking-wider">{t.receipt} Customization</h3>
+                  </div>
+                  
+                  <form onSubmit={async (e) => {
+                    e.preventDefault();
+                    try {
+                      await setDoc(doc(db, 'settings', 'general'), { receiptSettings }, { merge: true });
+                      setSettingsSuccess(true);
+                      setTimeout(() => setSettingsSuccess(false), 3000);
+                    } catch (error) {
+                      console.error("Error updating receipt settings:", error);
+                    }
+                  }} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2 uppercase tracking-wider">{t.shopName}</label>
+                      <input
+                        type="text"
+                        value={receiptSettings.shopName}
+                        onChange={(e) => setReceiptSettings(prev => ({ ...prev, shopName: e.target.value }))}
+                        className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white font-medium"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2 uppercase tracking-wider">{t.address}</label>
+                      <input
+                        type="text"
+                        value={receiptSettings.address}
+                        onChange={(e) => setReceiptSettings(prev => ({ ...prev, address: e.target.value }))}
+                        className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white font-medium"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2 uppercase tracking-wider">{t.phone}</label>
+                      <input
+                        type="text"
+                        value={receiptSettings.phone}
+                        onChange={(e) => setReceiptSettings(prev => ({ ...prev, phone: e.target.value }))}
+                        className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white font-medium"
+                        required
+                      />
+                    </div>
+                    <button type="submit" className="w-full py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700 transition-colors shadow-lg neo-3d uppercase tracking-widest flex items-center justify-center gap-2">
+                      <CheckCircle2 size={18} />
+                      Save Receipt Settings
+                    </button>
                   </form>
                 </div>
 
@@ -1842,7 +2052,10 @@ export default function App() {
                         const productRef = doc(db, 'products', restockProductId);
                         const product = products.find(p => p.id === restockProductId);
                         if (product) {
-                          await updateDoc(productRef, { stock: product.stock + qty });
+                          await updateDoc(productRef, { 
+                            stock: product.stock + qty,
+                            lastRestocked: new Date().toISOString()
+                          });
                         }
                         setRestockProductId(null);
                         setRestockQuantity('');
@@ -1911,6 +2124,291 @@ export default function App() {
             </motion.div>
           </div>
         )}
+
+        {/* Delete Product Modal */}
+        {productToDelete && (
+          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="bg-white dark:bg-slate-900 rounded-none neo-3d p-6 max-w-sm w-full border-t-4 border-red-500"
+            >
+              <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-widest mb-2">{t.deleteProduct}</h3>
+              <p className="text-slate-600 dark:text-slate-400 text-sm font-medium mb-8">
+                {t.deleteProductConfirm}
+              </p>
+              <div className="flex justify-end gap-4">
+                <button
+                  onClick={() => setProductToDelete(null)}
+                  className="px-6 py-3 text-sm font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-none transition-colors uppercase tracking-widest"
+                >
+                  {t.cancel}
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      await deleteDoc(doc(db, 'products', productToDelete));
+                    } catch (error) {
+                      console.error("Error deleting product:", error);
+                    }
+                    setProductToDelete(null);
+                  }}
+                  className="px-6 py-3 text-sm font-black bg-red-500 text-white hover:bg-red-600 rounded-none transition-colors uppercase tracking-widest neo-3d"
+                >
+                  {t.delete}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Clear Cart Modal */}
+        {isClearCartConfirmOpen && (
+          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="bg-white dark:bg-slate-900 rounded-none neo-3d p-6 max-w-sm w-full border-t-4 border-red-500"
+            >
+              <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-widest mb-2">{t.clearCart}</h3>
+              <p className="text-slate-600 dark:text-slate-400 text-sm font-medium mb-8">
+                {t.clearCartConfirm}
+              </p>
+              <div className="flex justify-end gap-4">
+                <button
+                  onClick={() => setIsClearCartConfirmOpen(false)}
+                  className="px-6 py-3 text-sm font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-none transition-colors uppercase tracking-widest"
+                >
+                  {t.cancel}
+                </button>
+                <button
+                  onClick={() => {
+                    setCart({});
+                    setIsClearCartConfirmOpen(false);
+                  }}
+                  className="px-6 py-3 text-sm font-black bg-red-500 text-white hover:bg-red-600 rounded-none transition-colors uppercase tracking-widest neo-3d"
+                >
+                  {t.delete}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+
+        {/* Receipt Modal */}
+        <AnimatePresence>
+          {isReceiptOpen && lastSale && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsReceiptOpen(false)}
+                className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+              />
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                className="relative w-full max-w-[320px] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-hidden flex flex-col border border-white/10"
+              >
+                <div className="p-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800/50">
+                  <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <CheckCircle2 size={20} className="text-emerald-500" />
+                    {t.receipt}
+                  </h3>
+                  <button onClick={() => setIsReceiptOpen(false)} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-colors text-slate-500">
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 bg-white dark:bg-slate-900 relative" id="receipt-content">
+                  {/* Decorative Paper Texture Overlay */}
+                  <div className="absolute inset-0 opacity-[0.03] pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/paper-fibers.png')] dark:invert" />
+                  
+                  <div className="text-center mb-4 relative z-10">
+                    <div className="w-12 h-12 bg-slate-900 dark:bg-white rounded-2xl flex items-center justify-center text-white dark:text-slate-900 mx-auto mb-3 shadow-2xl rotate-3">
+                      <ShoppingBag size={24} />
+                    </div>
+                    <h2 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tighter mb-1 leading-none">{receiptSettings.shopName}</h2>
+                    <div className="flex flex-col items-center gap-1">
+                      <p className="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-[0.2em] max-w-[200px] leading-relaxed">{receiptSettings.address}</p>
+                      <div className="h-px w-8 bg-slate-200 dark:bg-slate-800 my-1" />
+                      <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-[0.2em]">
+                        Phone - <span className="text-[13px] font-black text-slate-900 dark:text-white tracking-widest">{receiptSettings.phone.replace(/^(Phone|Ph|ဖုန်း)[\s:-]*/i, '')}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="relative mb-4">
+                    <div className="absolute inset-x-0 top-1/2 h-px bg-slate-200 dark:bg-slate-800 -translate-y-1/2" />
+                    <div className="relative flex justify-center">
+                      <span className="bg-white dark:bg-slate-900 px-3 text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.3em]">Transaction Details</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 mb-4">
+                    <div className="flex justify-between text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                      <span>{t.orderId}</span>
+                      <span className="text-slate-900 dark:text-white">#{lastSale.id}</span>
+                    </div>
+                    <div className="flex justify-between text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                      <span>{t.date}</span>
+                      <span className="text-slate-900 dark:text-white">{new Date(lastSale.timestamp).toLocaleString()}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 mb-6">
+                    {lastSale.items.map((item, idx) => (
+                      <div key={idx} className="group">
+                        <div className="flex justify-between items-start mb-1">
+                          <p className="text-sm font-black text-slate-900 dark:text-white leading-tight uppercase tracking-tight">{item.name}</p>
+                          <p className="text-sm font-black text-slate-900 dark:text-white">
+                            {(item.quantity * item.price).toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
+                            {item.quantity} x {item.price.toLocaleString()} MMK
+                          </span>
+                          <div className="flex-1 border-t border-dotted border-slate-200 dark:border-slate-800" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="space-y-2 mb-6">
+                    <div className="flex justify-between text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                      <span>{t.subtotal}</span>
+                      <span>{lastSale.totalAmount.toLocaleString()} MMK</span>
+                    </div>
+                    <div className="h-px bg-slate-900 dark:bg-white" />
+                    <div className="flex justify-between items-end">
+                      <span className="text-[10px] font-black text-slate-900 dark:text-white uppercase tracking-[0.2em]">{t.total}</span>
+                      <div className="text-right">
+                        <p className="text-2xl font-black text-slate-900 dark:text-white tracking-tighter leading-none">
+                          {lastSale.totalAmount.toLocaleString()}
+                        </p>
+                        <p className="text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mt-0.5">Kyats Only</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 text-center relative z-10">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-full h-12 flex items-center justify-center gap-0.5 opacity-80">
+                        {Array.from({ length: 40 }).map((_, i) => (
+                          <div 
+                            key={i} 
+                            className="bg-slate-900 dark:bg-white" 
+                            style={{ 
+                              width: `${Math.random() * 3 + 1}px`, 
+                              height: `${Math.random() * 20 + 20}px`,
+                              opacity: Math.random() * 0.5 + 0.5
+                            }} 
+                          />
+                        ))}
+                      </div>
+                      <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.4em]">{lastSale.id}</p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <p className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-widest">{t.thankYou}</p>
+                      <p className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.3em]">{t.customerCopy}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex gap-2">
+                  <button 
+                    onClick={async () => {
+                      const content = document.getElementById('receipt-content');
+                      if (content) {
+                        try {
+                          const dataUrl = await htmlToImage.toPng(content, {
+                            pixelRatio: 2,
+                            backgroundColor: 'white',
+                          });
+                          const link = document.createElement('a');
+                          link.href = dataUrl;
+                          link.download = `receipt-${lastSale.id}.png`;
+                          link.click();
+                        } catch (error) {
+                          console.error("Error saving receipt:", error);
+                          alert("Failed to save receipt as image.");
+                        }
+                      }
+                    }}
+                    className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all"
+                  >
+                    <Download size={14} />
+                    Save
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const content = document.getElementById('receipt-content');
+                      if (content) {
+                        const printWindow = window.open('', '_blank');
+                        if (printWindow) {
+                          printWindow.document.write(`
+                            <html>
+                              <head>
+                                <title>Receipt - ${lastSale.id}</title>
+                                <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+                                <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+                                <style>
+                                  @media print {
+                                    body { padding: 0; margin: 0; }
+                                    .no-print { display: none; }
+                                  }
+                                  body { 
+                                    font-family: 'Inter', sans-serif; 
+                                    -webkit-print-color-adjust: exact;
+                                  }
+                                  .receipt-container {
+                                    max-width: 320px;
+                                    margin: 0 auto;
+                                    padding: 20px;
+                                    background: white;
+                                  }
+                                </style>
+                              </head>
+                              <body class="bg-white text-black">
+                                <div class="receipt-container">
+                                  ${content.innerHTML}
+                                </div>
+                                <script>
+                                  window.onload = () => {
+                                    setTimeout(() => {
+                                      window.print();
+                                      window.close();
+                                    }, 800);
+                                  };
+                                </script>
+                              </body>
+                            </html>
+                          `);
+                          printWindow.document.close();
+                        }
+                      }
+                    }}
+                    className="flex-1 py-2.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all"
+                  >
+                    <Languages size={14} />
+                    {t.print}
+                  </button>
+                  <button 
+                    onClick={() => setIsReceiptOpen(false)}
+                    className="flex-1 py-2.5 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all"
+                  >
+                    {t.close}
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </AnimatePresence>
     </div>
   );
@@ -1925,7 +2423,10 @@ function CartContent({
   onAdd, 
   onClear, 
   onCheckout,
-  t
+  t,
+  lastSale,
+  onViewReceipt,
+  onPrintCart
 }: { 
   cartItems: { product: Product, qty: number }[], 
   cartTotal: number, 
@@ -1933,7 +2434,10 @@ function CartContent({
   onAdd: (id: string) => void, 
   onClear: () => void, 
   onCheckout: () => void,
-  t: any
+  t: any,
+  lastSale?: Sale | null,
+  onViewReceipt?: () => void,
+  onPrintCart?: () => void
 }) {
   return (
     <div className="flex flex-col h-full bg-slate-50/50 dark:bg-slate-900/50 backdrop-blur-xl">
@@ -1944,46 +2448,66 @@ function CartContent({
           </div>
           {t.cart}
         </h3>
-        <button 
-          onClick={onClear}
-          className="text-xs font-bold text-red-500 hover:text-red-600 transition-colors px-2 py-1 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md"
-        >
-          {t.clearAll}
-        </button>
+        <div className="flex items-center gap-2">
+          {lastSale && onViewReceipt && (
+            <button 
+              onClick={onViewReceipt}
+              className="text-xs font-bold text-indigo-500 hover:text-indigo-600 transition-colors px-2 py-1 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-md flex items-center gap-1"
+              title="Print Last Receipt"
+            >
+              <Printer size={14} />
+              <span className="hidden sm:inline">Receipt</span>
+            </button>
+          )}
+          <button 
+            onClick={onClear}
+            className="text-xs font-bold text-red-500 hover:text-red-600 transition-colors px-2 py-1 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md"
+          >
+            {t.clearAll}
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {cartItems.map(({ product, qty }) => (
-          <div key={product.id} className="bg-white dark:bg-slate-800 p-3 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex items-center gap-3 group">
-            <div className="w-12 h-12 bg-slate-100 dark:bg-slate-900 rounded-lg overflow-hidden shrink-0 border border-slate-100 dark:border-slate-700 relative">
-              {product.image ? (
-                <img src={product.image} alt={product.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-slate-300 dark:text-slate-600"><ImageIcon size={20} /></div>
-              )}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-bold text-slate-900 dark:text-white truncate text-sm">{product.name}</p>
-              <p className="text-xs font-bold text-slate-700 dark:text-slate-300">{(product.price * qty).toLocaleString()} MMK</p>
-            </div>
-            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg border border-slate-200 dark:border-slate-700">
-              <button 
-                onClick={() => onRemove(product.id)}
-                className="w-6 h-6 flex items-center justify-center rounded-md bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all text-slate-900 dark:text-white font-bold shadow-sm text-xs"
-              >
-                -
-              </button>
-              <span className="w-6 text-center font-bold text-xs text-slate-900 dark:text-white">{qty}</span>
-              <button 
-                onClick={() => onAdd(product.id)}
-                disabled={product.stock <= qty}
-                className="w-6 h-6 flex items-center justify-center rounded-md bg-slate-800 text-white hover:bg-slate-700 disabled:opacity-50 transition-all font-bold shadow-md text-xs"
-              >
-                +
-              </button>
-            </div>
-          </div>
-        ))}
+        <AnimatePresence initial={false}>
+          {cartItems.map(({ product, qty }) => (
+            <motion.div 
+              key={product.id}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="bg-white dark:bg-slate-800 p-3 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex items-center gap-3 group hover:border-indigo-500/30 transition-colors"
+            >
+              <div className="w-12 h-12 bg-slate-100 dark:bg-slate-900 rounded-xl overflow-hidden shrink-0 border border-slate-100 dark:border-slate-700 relative">
+                {product.image ? (
+                  <img src={product.image} alt={product.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-slate-300 dark:text-slate-600"><ImageIcon size={20} /></div>
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-black text-slate-900 dark:text-white truncate text-xs tracking-tight">{product.name}</p>
+                <p className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-widest">{(product.price * qty).toLocaleString()} MMK</p>
+              </div>
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
+                <button 
+                  onClick={() => onRemove(product.id)}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all text-slate-900 dark:text-white font-black shadow-sm text-xs"
+                >
+                  -
+                </button>
+                <span className="w-6 text-center font-black text-xs text-slate-900 dark:text-white">{qty}</span>
+                <button 
+                  onClick={() => onAdd(product.id)}
+                  disabled={product.stock <= qty}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-100 disabled:opacity-50 transition-all font-black shadow-md text-xs"
+                >
+                  +
+                </button>
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
         {cartItems.length === 0 && (
           <div className="text-center py-12">
             <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center mx-auto mb-4 border-2 border-slate-200 dark:border-slate-700 border-dashed">
@@ -2009,38 +2533,58 @@ function CartContent({
             <span>{cartTotal.toLocaleString()} MMK</span>
           </div>
         </div>
-        <button 
-          onClick={onCheckout}
-          disabled={cartItems.length === 0}
-          className="w-full py-3.5 bg-slate-800 text-white rounded-xl font-bold text-sm hover:bg-slate-700 hover:shadow-lg hover:shadow-slate-500/30 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
-        >
-          {t.checkout}
-          <ArrowRight size={18} />
-        </button>
+        <div className="flex gap-2">
+          {onPrintCart && (
+            <button 
+              onClick={onPrintCart}
+              disabled={cartItems.length === 0}
+              className="px-4 py-3.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 border border-slate-200 dark:border-slate-700"
+              title="View/Save Draft Receipt"
+            >
+              <FileText size={18} />
+              <span className="hidden sm:inline">Receipt</span>
+            </button>
+          )}
+          <button 
+            onClick={onCheckout}
+            disabled={cartItems.length === 0}
+            className="flex-1 py-3.5 bg-slate-800 text-white rounded-xl font-bold text-sm hover:bg-slate-700 hover:shadow-lg hover:shadow-slate-500/30 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+          >
+            {t.checkout}
+            <ArrowRight size={18} />
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 // --- Sub-components ---
 
-function SidebarItem({ icon, label, active, onClick }: { icon: React.ReactNode, label: string, active: boolean, onClick: () => void }) {
+function SidebarItem({ icon, label, active, onClick, badge }: { icon: React.ReactNode, label: string, active: boolean, onClick: () => void, badge?: number }) {
   return (
     <button 
       onClick={onClick}
       className={cn(
-        "w-[calc(100%-16px)] mx-2 flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 font-bold tracking-tight relative group overflow-hidden mb-1",
+        "w-[calc(100%-16px)] mx-2 flex items-center justify-between px-4 py-3 rounded-xl transition-all duration-300 font-bold tracking-tight relative group overflow-hidden mb-1",
         active 
           ? "bg-gradient-to-br from-white/20 to-white/5 text-white shadow-[0_8px_20px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.1)] border border-white/10 backdrop-blur-md translate-x-1" 
           : "text-white/50 hover:text-white hover:bg-white/5 hover:translate-x-1"
       )}
     >
-      <span className={cn(
-        "shrink-0 transition-transform duration-300 group-hover:scale-110",
-        active ? "text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]" : "text-white/40 group-hover:text-white/70"
-      )}>
-        {icon}
-      </span>
-      <span className="truncate text-sm">{label}</span>
+      <div className="flex items-center gap-3 min-w-0">
+        <span className={cn(
+          "shrink-0 transition-transform duration-300 group-hover:scale-110",
+          active ? "text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]" : "text-white/40 group-hover:text-white/70"
+        )}>
+          {icon}
+        </span>
+        <span className="truncate text-sm">{label}</span>
+      </div>
+      {badge !== undefined && badge > 0 && (
+        <span className="shrink-0 ml-2 px-2 py-0.5 bg-rose-500 text-white text-[10px] font-black rounded-full shadow-[0_0_10px_rgba(244,63,94,0.5)]">
+          {badge}
+        </span>
+      )}
       {active && (
         <motion.div 
           layoutId="sidebar-active-indicator"
@@ -2053,47 +2597,42 @@ function SidebarItem({ icon, label, active, onClick }: { icon: React.ReactNode, 
 
 function StatCard({ title, value, icon, color, unit = "MMK" }: { title: string, value: number, icon: React.ReactNode, color: string, unit?: string }) {
   const colors: { [key: string]: string } = {
-    emerald: "bg-emerald-500 border-emerald-700",
-    amber: "bg-amber-500 border-amber-700",
-    indigo: "bg-indigo-500 border-indigo-700",
-    rose: "bg-rose-500 border-rose-700",
-    violet: "bg-violet-500 border-violet-700",
-    sky: "bg-sky-500 border-sky-700",
+    emerald: "bg-emerald-500 border-emerald-600 shadow-emerald-500/20",
+    amber: "bg-amber-500 border-amber-600 shadow-amber-500/20",
+    indigo: "bg-indigo-500 border-indigo-600 shadow-indigo-500/20",
+    rose: "bg-rose-500 border-rose-600 shadow-rose-500/20",
+    violet: "bg-violet-500 border-violet-600 shadow-violet-500/20",
+    sky: "bg-sky-500 border-sky-600 shadow-sky-500/20",
   };
 
   return (
-    <div className={cn(
-      "p-3 sm:p-4 rounded-2xl border-2 border-b-[6px] border-r-[6px] transition-all hover:-translate-y-1 hover:translate-x-[-1px] hover:border-b-[8px] hover:border-r-[8px] active:border-b-[2px] active:border-r-[2px] active:translate-y-[4px] active:translate-x-[4px] duration-200 group relative overflow-hidden",
-      colors[color] || "bg-slate-500 border-slate-700"
-    )}>
-      <div className="absolute -right-4 -top-4 w-24 h-24 bg-white/20 rounded-full blur-2xl group-hover:scale-125 transition-transform duration-500" />
+    <motion.div 
+      whileHover={{ y: -4, scale: 1.02 }}
+      className={cn(
+        "p-5 rounded-3xl border-b-4 transition-all duration-300 group relative overflow-hidden shadow-lg",
+        colors[color] || "bg-slate-500 border-slate-600"
+      )}
+    >
+      <div className="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full blur-3xl group-hover:scale-150 transition-transform duration-700" />
       
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-3 sm:mb-4 relative z-10 gap-2 sm:gap-0">
-        <motion.div 
-          animate={{ y: [0, -3, 0] }}
-          transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-          className={cn(
-            "p-2 sm:p-3 rounded-xl bg-white shadow-sm border-b-[3px] border-r-[3px] border-black/10 group-hover:rotate-6 transition-all duration-300 w-fit shrink-0",
-            color === 'emerald' ? "text-emerald-600" : 
-            color === 'amber' ? "text-amber-600" : 
-            color === 'indigo' ? "text-indigo-600" : 
-            color === 'rose' ? "text-rose-600" :
-            color === 'violet' ? "text-violet-600" :
-            color === 'sky' ? "text-sky-600" : "text-slate-600"
-          )}
-        >
-          <div className="scale-75 sm:scale-100 origin-center">{icon}</div>
-        </motion.div>
-        <div className="flex flex-col sm:items-end">
-          <span className="text-[10px] sm:text-xs font-bold text-white/90 uppercase tracking-wider mb-1">{title}</span>
-          <div className="h-1 w-6 sm:w-8 rounded-full bg-white/40" />
+      <div className="flex items-start justify-between mb-4 relative z-10">
+        <div className={cn(
+          "p-3 rounded-2xl bg-white/20 backdrop-blur-md border border-white/30 text-white shadow-inner",
+        )}>
+          {icon}
+        </div>
+        <div className="text-right">
+          <span className="text-[10px] font-black text-white/70 uppercase tracking-[0.2em]">{title}</span>
         </div>
       </div>
-      <p className="text-xl sm:text-3xl font-black text-white tracking-tight relative z-10 break-words">
-        {value.toLocaleString()} 
-        {unit && <span className="text-[10px] sm:text-xs font-bold text-white/80 ml-1 uppercase tracking-widest">{unit}</span>}
-      </p>
-    </div>
+      
+      <div className="relative z-10">
+        <p className="text-2xl sm:text-3xl font-black text-white tracking-tighter leading-none mb-1">
+          {value.toLocaleString()}
+        </p>
+        <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest">{unit}</p>
+      </div>
+    </motion.div>
   );
 }
 
@@ -2121,7 +2660,9 @@ function AddProductForm({
     image: initialData?.image || '',
     ram: initialData?.ram || '',
     storage: initialData?.storage || '',
-    color: initialData?.color || ''
+    color: initialData?.color || '',
+    barcode: initialData?.barcode || '',
+    description: initialData?.description || ''
   });
 
   const [isAddingCategory, setIsAddingCategory] = useState(false);
@@ -2148,7 +2689,9 @@ function AddProductForm({
       image: formData.image,
       ram: formData.ram,
       storage: formData.storage,
-      color: formData.color
+      color: formData.color,
+      barcode: formData.barcode,
+      description: formData.description
     });
   };
 
@@ -2170,16 +2713,28 @@ function AddProductForm({
   return (
     <form onSubmit={handleSubmit} className="p-6 space-y-6">
       <div className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{t.productName}</label>
-          <input 
-            required
-            type="text" 
-            className="w-full px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-slate-900 dark:text-white"
-            value={formData.name}
-            onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-            placeholder="e.g. Apple iPhone 15"
-          />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{t.productName}</label>
+            <input 
+              required
+              type="text" 
+              className="w-full px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-slate-900 dark:text-white"
+              value={formData.name}
+              onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
+              placeholder="e.g. Apple iPhone 15"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{t.barcode || 'Barcode'}</label>
+            <input 
+              type="text" 
+              className="w-full px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-slate-900 dark:text-white"
+              value={formData.barcode}
+              onChange={e => setFormData(prev => ({ ...prev, barcode: e.target.value }))}
+              placeholder="e.g. 12345678"
+            />
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
@@ -2311,7 +2866,7 @@ function AddProductForm({
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">RAM</label>
             <input 
@@ -2371,8 +2926,18 @@ function AddProductForm({
         </div>
 
         <div>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{t.description || 'Description'}</label>
+          <textarea 
+            className="w-full px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-slate-900 dark:text-white resize-none h-24"
+            value={formData.description}
+            onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
+            placeholder="Product details..."
+          />
+        </div>
+
+        <div>
           <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2 uppercase tracking-wider">{t.productImage}</label>
-          <div className="relative group">
+          <div className="relative group w-32 h-32 sm:w-40 sm:h-40">
             <input 
               type="file" 
               accept="image/*"
@@ -2383,7 +2948,7 @@ function AddProductForm({
             <label 
               htmlFor="product-image-upload"
               className={cn(
-                "flex flex-col items-center justify-center w-full h-32 sm:h-40 rounded-2xl border-2 border-b-[6px] border-r-[6px] border-slate-200 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-800/10 text-slate-500 dark:text-slate-400 cursor-pointer transition-all duration-200",
+                "flex flex-col items-center justify-center w-full h-full rounded-2xl border-2 border-b-[6px] border-r-[6px] border-slate-200 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-800/10 text-slate-500 dark:text-slate-400 cursor-pointer transition-all duration-200",
                 "hover:-translate-y-1 hover:translate-x-[-1px] hover:border-b-[8px] hover:border-r-[8px] hover:bg-slate-50 dark:hover:bg-slate-800/20",
                 "active:border-b-[2px] active:border-r-[2px] active:translate-y-[4px] active:translate-x-[4px]",
                 "overflow-hidden relative"
@@ -2393,11 +2958,10 @@ function AddProductForm({
                 <img src={formData.image} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
                 <>
-                  <div className="p-3 bg-white dark:bg-slate-800 rounded-xl shadow-sm border-b-[3px] border-r-[3px] border-black/10 mb-3 group-hover:rotate-6 transition-transform duration-300">
-                    <Upload size={24} className="text-slate-500" />
+                  <div className="p-2 bg-white dark:bg-slate-800 rounded-xl shadow-sm border-b-[3px] border-r-[3px] border-black/10 mb-2 group-hover:rotate-6 transition-transform duration-300">
+                    <Upload size={20} className="text-slate-500" />
                   </div>
-                  <span className="text-sm font-bold tracking-wide">{t.uploadDevice}</span>
-                  <span className="text-xs font-medium opacity-70 mt-1">PNG, JPG up to 10MB</span>
+                  <span className="text-xs font-bold tracking-wide text-center px-2">{t.uploadDevice}</span>
                 </>
               )}
             </label>
@@ -2405,16 +2969,16 @@ function AddProductForm({
               <button 
                 type="button"
                 onClick={(e) => { e.preventDefault(); setFormData(prev => ({ ...prev, image: '' })); }}
-                className="absolute top-3 right-3 p-2 bg-red-500 text-white rounded-xl shadow-sm border-b-[3px] border-r-[3px] border-red-700 hover:-translate-y-0.5 hover:border-b-[4px] hover:border-r-[4px] active:translate-y-[2px] active:translate-x-[2px] active:border-b-[1px] active:border-r-[1px] transition-all z-10"
+                className="absolute -top-2 -right-2 p-1.5 bg-red-500 text-white rounded-xl shadow-sm border-b-[3px] border-r-[3px] border-red-700 hover:-translate-y-0.5 hover:border-b-[4px] hover:border-r-[4px] active:translate-y-[2px] active:translate-x-[2px] active:border-b-[1px] active:border-r-[1px] transition-all z-10"
               >
-                <Trash2 size={16} />
+                <Trash2 size={14} />
               </button>
             )}
           </div>
         </div>
       </div>
 
-      <div className="pt-4 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-3">
+      <div className="sticky bottom-0 pt-4 pb-2 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-3 mt-4">
         <button 
           type="submit"
           className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors shadow-sm"
