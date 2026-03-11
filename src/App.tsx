@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   LayoutDashboard, 
   Package, 
@@ -85,6 +85,11 @@ interface Sale {
   totalAmount: number;
   totalCost: number;
   profit: number;
+  discount?: number;
+  deliveryFee?: number;
+  paymentMethod?: string;
+  customerName?: string;
+  customerPhone?: string;
 }
 
 // --- Constants ---
@@ -216,7 +221,29 @@ const TRANSLATIONS = {
     address: 'Yangon, Myanmar',
     phone: '09-123456789',
     barcode: 'Barcode',
-    description: 'Description'
+    description: 'Description',
+    discount: 'Discount',
+    paymentMethod: 'Payment Method',
+    customerName: 'Customer Name',
+    customerPhone: 'Customer Phone',
+    cash: 'Cash',
+    kpay: 'KPay',
+    wavepay: 'WavePay',
+    bankTransfer: 'Bank Transfer',
+    transactionDetails: 'Transaction Details',
+    kyatsOnly: 'Kyats Only',
+    currency: 'MMK',
+    phoneLabel: 'PHONE',
+    save: 'Save',
+    deliveryFee: 'Delivery Fee',
+    shopLogo: 'Shop Logo',
+    uploadLogo: 'Upload Logo',
+    removeLogo: 'Remove Logo',
+    allPaymentMethods: 'All Payment Methods',
+    filterByCustomer: 'Filter by Customer...',
+    showShopName: 'Show Shop Name',
+    showThankYou: 'Show Thank You Message',
+    saveReceiptSettings: 'Save Receipt Settings'
   },
   mm: {
     dashboard: 'ပင်မစာမျက်နှာ',
@@ -340,7 +367,29 @@ const TRANSLATIONS = {
     address: 'ရန်ကုန်မြို့၊ မြန်မာနိုင်ငံ',
     phone: '၀၉-၁၂၃၄၅၆၇၈၉',
     barcode: 'ဘားကုဒ်',
-    description: 'အကြောင်းအရာ'
+    description: 'အကြောင်းအရာ',
+    discount: 'လျှော့စျေး',
+    paymentMethod: 'ငွေပေးချေမှုပုံစံ',
+    customerName: 'ဝယ်သူအမည်',
+    customerPhone: 'ဝယ်သူဖုန်းနံပါတ်',
+    cash: 'ငွေသား',
+    kpay: 'KPay',
+    wavepay: 'WavePay',
+    bankTransfer: 'ဘဏ်လွှဲ',
+    transactionDetails: 'ငွေပေးချေမှု အသေးစိတ်',
+    kyatsOnly: 'ကျပ်တိတိ',
+    currency: 'ကျပ်',
+    phoneLabel: 'ဖုန်း',
+    save: 'သိမ်းမည်',
+    deliveryFee: 'ပို့ဆောင်ခ',
+    shopLogo: 'ဆိုင်တံဆိပ် (Logo)',
+    uploadLogo: 'Logo တင်မည်',
+    removeLogo: 'Logo ဖယ်ရှားမည်',
+    allPaymentMethods: 'ငွေပေးချေမှု အားလုံး',
+    filterByCustomer: 'ဝယ်သူအမည်ဖြင့် ရှာရန်...',
+    showShopName: 'ဆိုင်အမည် ပြသမည်',
+    showThankYou: 'ကျေးဇူးတင်လွှာ ပြသမည်',
+    saveReceiptSettings: 'ဘောက်ချာ ဆက်တင်များ သိမ်းဆည်းမည်'
   }
 };
 
@@ -363,7 +412,10 @@ export default function App() {
   const [receiptSettings, setReceiptSettings] = useState({ 
     shopName: 'Z SHOP POS', 
     address: 'Yangon, Myanmar', 
-    phone: '09-123456789' 
+    phone: '09-123456789',
+    logo: '',
+    showShopName: true,
+    showThankYou: true
   });
   const [currentUser, setCurrentUser] = useState<{ username: string, role: 'admin' | 'staff' } | null>(() => {
     const saved = localStorage.getItem('pos_current_user');
@@ -399,8 +451,16 @@ export default function App() {
   
   // Cart state
   const [cart, setCart] = useState<{ [id: string]: number }>({});
+  const [checkoutDiscount, setCheckoutDiscount] = useState<number>(0);
+  const [checkoutDeliveryFee, setCheckoutDeliveryFee] = useState<number>(0);
+  const [checkoutPaymentMethod, setCheckoutPaymentMethod] = useState<string>('Cash');
+  const [checkoutCustomerName, setCheckoutCustomerName] = useState<string>('');
+  const [checkoutCustomerPhone, setCheckoutCustomerPhone] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDate, setSelectedDate] = useState<string>('');
+  const dateInputRef = useRef<HTMLInputElement>(null);
+  const [filterPaymentMethod, setFilterPaymentMethod] = useState<string>('');
+  const [filterCustomerName, setFilterCustomerName] = useState<string>('');
   const [saleToDelete, setSaleToDelete] = useState<string | null>(null);
   const [productToDelete, setProductToDelete] = useState<string | null>(null);
   const [isClearCartConfirmOpen, setIsClearCartConfirmOpen] = useState(false);
@@ -481,17 +541,33 @@ export default function App() {
   }, [cartItems]);
 
   const filteredSales = useMemo(() => {
-    if (!selectedDate) return sales;
     return sales.filter(sale => {
-      const date = new Date(sale.timestamp);
-      // Format date to local YYYY-MM-DD
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      const dateStr = `${year}-${month}-${day}`;
-      return dateStr === selectedDate;
+      // Date filter
+      let matchesDate = true;
+      if (selectedDate) {
+        const date = new Date(sale.timestamp);
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${day}`;
+        matchesDate = dateStr === selectedDate;
+      }
+
+      // Payment Method filter
+      let matchesPayment = true;
+      if (filterPaymentMethod) {
+        matchesPayment = sale.paymentMethod === filterPaymentMethod;
+      }
+
+      // Customer Name filter
+      let matchesCustomer = true;
+      if (filterCustomerName) {
+        matchesCustomer = sale.customerName?.toLowerCase().includes(filterCustomerName.toLowerCase()) || false;
+      }
+
+      return matchesDate && matchesPayment && matchesCustomer;
     });
-  }, [sales, selectedDate]);
+  }, [sales, selectedDate, filterPaymentMethod, filterCustomerName]);
 
   const historyStats = useMemo(() => {
     const totalSales = filteredSales.reduce((sum, s) => sum + s.totalAmount, 0);
@@ -544,7 +620,7 @@ export default function App() {
   const printCart = () => {
     if (cartItems.length === 0) return;
 
-    const totalAmount = cartTotal;
+    const totalAmount = Math.max(0, cartTotal - checkoutDiscount) + checkoutDeliveryFee;
     const totalCost = cartItems.reduce((sum, item) => sum + (item.product.cost * item.qty), 0);
     const profit = totalAmount - totalCost;
 
@@ -561,7 +637,12 @@ export default function App() {
       })),
       totalAmount,
       totalCost,
-      profit
+      profit,
+      discount: checkoutDiscount,
+      deliveryFee: checkoutDeliveryFee,
+      paymentMethod: checkoutPaymentMethod,
+      customerName: checkoutCustomerName,
+      customerPhone: checkoutCustomerPhone
     };
 
     setLastSale(draftSale);
@@ -571,7 +652,7 @@ export default function App() {
   const checkout = async () => {
     if (cartItems.length === 0) return;
 
-    const totalAmount = cartTotal;
+    const totalAmount = Math.max(0, cartTotal - checkoutDiscount) + checkoutDeliveryFee;
     const totalCost = cartItems.reduce((sum, item) => sum + (item.product.cost * item.qty), 0);
     const profit = totalAmount - totalCost;
 
@@ -588,7 +669,12 @@ export default function App() {
       })),
       totalAmount,
       totalCost,
-      profit
+      profit,
+      discount: checkoutDiscount,
+      deliveryFee: checkoutDeliveryFee,
+      paymentMethod: checkoutPaymentMethod,
+      customerName: checkoutCustomerName,
+      customerPhone: checkoutCustomerPhone
     };
 
     try {
@@ -608,6 +694,11 @@ export default function App() {
       // Optimistic update for faster UI response
       setLastSale(newSale);
       setCart({});
+      setCheckoutDiscount(0);
+      setCheckoutDeliveryFee(0);
+      setCheckoutPaymentMethod('Cash');
+      setCheckoutCustomerName('');
+      setCheckoutCustomerPhone('');
 
       await batch.commit();
     } catch (error) {
@@ -1334,6 +1425,16 @@ export default function App() {
                     lastSale={lastSale}
                     onViewReceipt={() => setIsReceiptOpen(true)}
                     onPrintCart={printCart}
+                    checkoutDiscount={checkoutDiscount}
+                    setCheckoutDiscount={setCheckoutDiscount}
+                    checkoutDeliveryFee={checkoutDeliveryFee}
+                    setCheckoutDeliveryFee={setCheckoutDeliveryFee}
+                    checkoutPaymentMethod={checkoutPaymentMethod}
+                    setCheckoutPaymentMethod={setCheckoutPaymentMethod}
+                    checkoutCustomerName={checkoutCustomerName}
+                    setCheckoutCustomerName={setCheckoutCustomerName}
+                    checkoutCustomerPhone={checkoutCustomerPhone}
+                    setCheckoutCustomerPhone={setCheckoutCustomerPhone}
                   />
                 </div>
 
@@ -1376,6 +1477,16 @@ export default function App() {
                             lastSale={lastSale}
                             onViewReceipt={() => setIsReceiptOpen(true)}
                             onPrintCart={printCart}
+                            checkoutDiscount={checkoutDiscount}
+                            setCheckoutDiscount={setCheckoutDiscount}
+                            checkoutDeliveryFee={checkoutDeliveryFee}
+                            setCheckoutDeliveryFee={setCheckoutDeliveryFee}
+                            checkoutPaymentMethod={checkoutPaymentMethod}
+                            setCheckoutPaymentMethod={setCheckoutPaymentMethod}
+                            checkoutCustomerName={checkoutCustomerName}
+                            setCheckoutCustomerName={setCheckoutCustomerName}
+                            checkoutCustomerPhone={checkoutCustomerPhone}
+                            setCheckoutCustomerPhone={setCheckoutCustomerPhone}
                           />
                         </div>
                       </motion.div>
@@ -1416,6 +1527,7 @@ export default function App() {
                           <th className="px-6 py-4 text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider">{t.stock}</th>
                           <th className="px-6 py-4 text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider">Restocked</th>
                           <th className="px-6 py-4 text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider">{t.profitUnit}</th>
+                          <th className="px-6 py-4 text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider">Description</th>
                           <th className="px-6 py-4 text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider text-right">{t.actions}</th>
                         </tr>
                       </thead>
@@ -1477,6 +1589,11 @@ export default function App() {
                                 +{(product.price - product.cost).toLocaleString()}
                               </span>
                             </td>
+                            <td className="px-6 py-4">
+                              <span className="text-sm text-slate-500 dark:text-slate-400 block max-w-[200px] truncate" title={product.description}>
+                                {product.description || '-'}
+                              </span>
+                            </td>
                             <td className="px-6 py-4 text-right">
                               <div className="flex items-center justify-end gap-2">
                                 <button 
@@ -1524,39 +1641,90 @@ export default function App() {
                 exit={{ opacity: 0 }}
                 className="space-y-6 h-full overflow-y-auto p-4 lg:p-8"
               >
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                  <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-widest">{t.salesHistory}</h3>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="relative">
+                <div className="flex flex-col gap-6">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-widest">{t.salesHistory}</h3>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="glass-panel px-6 py-3 rounded-none neo-3d border-t border-indigo-500/20 flex items-center gap-3">
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-black tracking-widest">{t.totalSales}:</span>
+                        <span className="font-black text-slate-700 dark:text-slate-300 text-sm">{historyStats.totalSales.toLocaleString()} MMK</span>
+                      </div>
+                      {currentUser?.role === 'admin' && (
+                        <div className="glass-panel px-6 py-3 rounded-none neo-3d border-t border-emerald-500/20 flex items-center gap-3">
+                          <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-black tracking-widest">{t.totalProfit}:</span>
+                          <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">{historyStats.totalProfit.toLocaleString()} MMK</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div 
+                      className="relative cursor-pointer" 
+                      onClick={() => {
+                        const input = dateInputRef.current;
+                        if (!input) return;
+                        const inputAny = input as any;
+                        if ('showPicker' in inputAny) {
+                          try {
+                            inputAny.showPicker();
+                          } catch (e) {
+                            inputAny.click();
+                          }
+                        } else {
+                          inputAny.click();
+                        }
+                      }}
+                    >
                       <input
+                        ref={dateInputRef}
                         type="date"
                         value={selectedDate}
                         onChange={(e) => setSelectedDate(e.target.value)}
-                        className="px-4 py-3 bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-none neo-3d text-sm font-bold text-slate-900 dark:text-white focus:ring-0 focus:border-indigo-500 outline-none cursor-pointer"
+                        className="w-full px-4 py-2 bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-full text-sm font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer transition-all"
                       />
                       {!selectedDate && (
-                        <div className="absolute inset-0 bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-none neo-3d flex items-center px-4 pointer-events-none">
+                        <div className="absolute inset-0 bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-full flex items-center px-4 pointer-events-none">
                           <span className="text-sm font-bold text-slate-900 dark:text-white">{t.allDays}</span>
                         </div>
                       )}
                     </div>
+
+                    <div className="relative">
+                      <select
+                        value={filterPaymentMethod}
+                        onChange={(e) => setFilterPaymentMethod(e.target.value)}
+                        className="w-full px-4 py-2 bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-full text-sm font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer transition-all"
+                      >
+                        <option value="">{t.allPaymentMethods}</option>
+                        <option value="Cash">{t.cash}</option>
+                        <option value="KPay">{t.kpay}</option>
+                        <option value="WavePay">{t.wavepay}</option>
+                        <option value="Bank Transfer">{t.bankTransfer}</option>
+                      </select>
+                    </div>
+
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={filterCustomerName}
+                        onChange={(e) => setFilterCustomerName(e.target.value)}
+                        placeholder={t.filterByCustomer}
+                        className="w-full px-4 py-2 bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-full text-sm font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      />
+                    </div>
+
                     <button 
-                      onClick={() => setSelectedDate('')}
-                      className="px-4 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-none neo-3d hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-sm font-bold"
-                      title="Clear Filter"
+                      onClick={() => {
+                        setSelectedDate('');
+                        setFilterPaymentMethod('');
+                        setFilterCustomerName('');
+                      }}
+                      className="px-6 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 transition-all text-sm font-bold flex items-center justify-center gap-2 border-2 border-transparent hover:border-slate-300 dark:hover:border-slate-600 shadow-sm"
                     >
                       <X size={18} />
+                      {t.clearAll}
                     </button>
-                    <div className="glass-panel px-6 py-3 rounded-none neo-3d border-t border-indigo-500/20 flex items-center gap-3">
-                      <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-black tracking-widest">{t.totalSales}:</span>
-                      <span className="font-black text-slate-700 dark:text-slate-300 text-sm">{historyStats.totalSales.toLocaleString()} MMK</span>
-                    </div>
-                    {currentUser?.role === 'admin' && (
-                      <div className="glass-panel px-6 py-3 rounded-none neo-3d border-t border-emerald-500/20 flex items-center gap-3">
-                        <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-black tracking-widest">{t.totalProfit}:</span>
-                        <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">{historyStats.totalProfit.toLocaleString()} MMK</span>
-                      </div>
-                    )}
                   </div>
                 </div>
 
@@ -1582,7 +1750,19 @@ export default function App() {
                                 </span>
                               ))}
                             </div>
-                            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-1">{new Date(sale.timestamp).toLocaleString()}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">{new Date(sale.timestamp).toLocaleString()}</p>
+                              {sale.paymentMethod && (
+                                <span className="text-[9px] font-bold bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                  {sale.paymentMethod}
+                                </span>
+                              )}
+                              {sale.customerName && (
+                                <span className="text-[9px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-1.5 py-0.5 rounded uppercase tracking-wider truncate max-w-[100px]">
+                                  {sale.customerName}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                         
@@ -1731,13 +1911,58 @@ export default function App() {
                     }
                   }} className="space-y-4">
                     <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2 uppercase tracking-wider">{t.shopLogo}</label>
+                      <div className="flex items-center gap-4">
+                        {receiptSettings.logo ? (
+                          <div className="relative group">
+                            <img 
+                              src={receiptSettings.logo} 
+                              alt="Shop Logo" 
+                              className="w-20 h-20 object-contain rounded-xl border border-slate-200 dark:border-slate-700 bg-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setReceiptSettings(prev => ({ ...prev, logo: '' }))}
+                              className="absolute -top-2 -right-2 p-1.5 bg-rose-500 text-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        ) : (
+                          <label className="w-20 h-20 flex flex-col items-center justify-center border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl cursor-pointer hover:border-indigo-500 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
+                            <Upload size={20} className="text-slate-400 mb-1" />
+                            <span className="text-[10px] font-bold text-slate-500 uppercase">{t.uploadLogo}</span>
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              className="hidden" 
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.onloadend = () => {
+                                    setReceiptSettings(prev => ({ ...prev, logo: reader.result as string }));
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              }}
+                            />
+                          </label>
+                        )}
+                        <div className="flex-1">
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium leading-relaxed">
+                            Recommended: Square image, transparent background. Max size 500KB.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div>
                       <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2 uppercase tracking-wider">{t.shopName}</label>
                       <input
                         type="text"
                         value={receiptSettings.shopName}
                         onChange={(e) => setReceiptSettings(prev => ({ ...prev, shopName: e.target.value }))}
                         className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white font-medium"
-                        required
                       />
                     </div>
                     <div>
@@ -1747,7 +1972,6 @@ export default function App() {
                         value={receiptSettings.address}
                         onChange={(e) => setReceiptSettings(prev => ({ ...prev, address: e.target.value }))}
                         className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white font-medium"
-                        required
                       />
                     </div>
                     <div>
@@ -1757,12 +1981,42 @@ export default function App() {
                         value={receiptSettings.phone}
                         onChange={(e) => setReceiptSettings(prev => ({ ...prev, phone: e.target.value }))}
                         className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white font-medium"
-                        required
                       />
                     </div>
+
+                    <div className="flex flex-col gap-3 pt-2">
+                      <label className="flex items-center gap-3 cursor-pointer group">
+                        <div className="relative">
+                          <input 
+                            type="checkbox" 
+                            className="sr-only" 
+                            checked={receiptSettings.showShopName}
+                            onChange={(e) => setReceiptSettings(prev => ({ ...prev, showShopName: e.target.checked }))}
+                          />
+                          <div className={`w-10 h-5 rounded-full transition-colors ${receiptSettings.showShopName ? 'bg-indigo-500' : 'bg-slate-300 dark:bg-slate-700'}`} />
+                          <div className={`absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform ${receiptSettings.showShopName ? 'translate-x-5' : ''}`} />
+                        </div>
+                        <span className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider group-hover:text-indigo-500 transition-colors">{t.showShopName}</span>
+                      </label>
+
+                      <label className="flex items-center gap-3 cursor-pointer group">
+                        <div className="relative">
+                          <input 
+                            type="checkbox" 
+                            className="sr-only" 
+                            checked={receiptSettings.showThankYou}
+                            onChange={(e) => setReceiptSettings(prev => ({ ...prev, showThankYou: e.target.checked }))}
+                          />
+                          <div className={`w-10 h-5 rounded-full transition-colors ${receiptSettings.showThankYou ? 'bg-indigo-500' : 'bg-slate-300 dark:bg-slate-700'}`} />
+                          <div className={`absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform ${receiptSettings.showThankYou ? 'translate-x-5' : ''}`} />
+                        </div>
+                        <span className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider group-hover:text-indigo-500 transition-colors">{t.showThankYou}</span>
+                      </label>
+                    </div>
+
                     <button type="submit" className="w-full py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700 transition-colors shadow-lg neo-3d uppercase tracking-widest flex items-center justify-center gap-2">
                       <CheckCircle2 size={18} />
-                      Save Receipt Settings
+                      {t.saveReceiptSettings}
                     </button>
                   </form>
                 </div>
@@ -2211,7 +2465,7 @@ export default function App() {
                 initial={{ opacity: 0, scale: 0.9, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.9, y: 20 }}
-                className="relative w-full max-w-[320px] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-hidden flex flex-col border border-white/10"
+                className="relative w-full max-w-[320px] max-h-[90vh] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-hidden flex flex-col border border-white/10"
               >
                 <div className="p-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800/50">
                   <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -2223,54 +2477,97 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 bg-white dark:bg-slate-900 relative" id="receipt-content">
-                  {/* Decorative Paper Texture Overlay */}
-                  <div className="absolute inset-0 opacity-[0.03] pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/paper-fibers.png')] dark:invert" />
+                <div className="flex-1 overflow-y-auto bg-white dark:bg-slate-900 relative">
+                  <div id="receipt-content" className="p-4 relative bg-white dark:bg-slate-900">
+                    {/* Decorative Paper Texture Overlay */}
+                    <div className="absolute inset-0 opacity-[0.03] pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/paper-fibers.png')] dark:invert" />
                   
                   <div className="text-center mb-4 relative z-10">
-                    <div className="w-12 h-12 bg-slate-900 dark:bg-white rounded-2xl flex items-center justify-center text-white dark:text-slate-900 mx-auto mb-3 shadow-2xl rotate-3">
-                      <ShoppingBag size={24} />
-                    </div>
-                    <h2 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tighter mb-1 leading-none">{receiptSettings.shopName}</h2>
+                    {receiptSettings.logo ? (
+                      <div className="mb-3">
+                        <img 
+                          src={receiptSettings.logo} 
+                          alt="Shop Logo" 
+                          className="h-16 w-auto mx-auto object-contain"
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-12 h-12 bg-slate-900 dark:bg-white rounded-2xl flex items-center justify-center text-white dark:text-slate-900 mx-auto mb-3 shadow-2xl rotate-3">
+                        <ShoppingBag size={24} />
+                      </div>
+                    )}
+                    {receiptSettings.showShopName && (
+                      <h2 className="text-xl font-bold text-slate-900 dark:text-white uppercase tracking-tighter mb-1 leading-none">{receiptSettings.shopName}</h2>
+                    )}
                     <div className="flex flex-col items-center gap-1">
-                      <p className="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-[0.2em] max-w-[200px] leading-relaxed">{receiptSettings.address}</p>
-                      <div className="h-px w-8 bg-slate-200 dark:bg-slate-800 my-1" />
-                      <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-[0.2em]">
-                        Phone - <span className="text-[13px] font-black text-slate-900 dark:text-white tracking-widest">{receiptSettings.phone.replace(/^(Phone|Ph|ဖုန်း)[\s:-]*/i, '')}</span>
-                      </p>
+                      {receiptSettings.address && (
+                        <p className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-[0.2em] max-w-[200px] leading-relaxed">{receiptSettings.address}</p>
+                      )}
+                      {receiptSettings.phone && (
+                        <>
+                          <div className="h-px w-8 bg-slate-200 dark:bg-slate-800 my-1" />
+                          <p className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-widest mt-0.5">
+                            {t.phoneLabel} - <span className="text-sm tracking-widest">{receiptSettings.phone.replace(/^(Phone|Ph|ဖုန်း)[\s:-]*/i, '')}</span>
+                          </p>
+                        </>
+                      )}
                     </div>
                   </div>
 
                   <div className="relative mb-4">
                     <div className="absolute inset-x-0 top-1/2 h-px bg-slate-200 dark:bg-slate-800 -translate-y-1/2" />
                     <div className="relative flex justify-center">
-                      <span className="bg-white dark:bg-slate-900 px-3 text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.3em]">Transaction Details</span>
+                      <span className="bg-white dark:bg-slate-900 px-3 text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-[0.3em]">{t.transactionDetails}</span>
                     </div>
                   </div>
 
                   <div className="space-y-1.5 mb-4">
-                    <div className="flex justify-between text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                    <div className="flex justify-between text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-widest">
                       <span>{t.orderId}</span>
                       <span className="text-slate-900 dark:text-white">#{lastSale.id}</span>
                     </div>
-                    <div className="flex justify-between text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                    <div className="flex justify-between text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-widest">
                       <span>{t.date}</span>
                       <span className="text-slate-900 dark:text-white">{new Date(lastSale.timestamp).toLocaleString()}</span>
                     </div>
+                    {lastSale.paymentMethod && (
+                      <div className="flex justify-between text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-widest">
+                        <span>{t.paymentMethod}</span>
+                        <span className="text-slate-900 dark:text-white">
+                          {lastSale.paymentMethod === 'Cash' ? t.cash : 
+                           lastSale.paymentMethod === 'KPay' ? t.kpay : 
+                           lastSale.paymentMethod === 'WavePay' ? t.wavepay : 
+                           lastSale.paymentMethod === 'Bank Transfer' ? t.bankTransfer : 
+                           lastSale.paymentMethod}
+                        </span>
+                      </div>
+                    )}
+                    {lastSale.customerName && (
+                      <div className="flex justify-between text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-widest">
+                        <span>{t.customerName}</span>
+                        <span className="text-slate-900 dark:text-white">{lastSale.customerName}</span>
+                      </div>
+                    )}
+                    {lastSale.customerPhone && (
+                      <div className="flex justify-between text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-widest">
+                        <span>{t.customerPhone}</span>
+                        <span className="text-slate-900 dark:text-white">{lastSale.customerPhone}</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-3 mb-6">
                     {lastSale.items.map((item, idx) => (
                       <div key={idx} className="group">
                         <div className="flex justify-between items-start mb-1">
-                          <p className="text-sm font-black text-slate-900 dark:text-white leading-tight uppercase tracking-tight">{item.name}</p>
-                          <p className="text-sm font-black text-slate-900 dark:text-white">
+                          <p className="text-sm font-bold text-slate-900 dark:text-white leading-tight uppercase tracking-tight">{item.name}</p>
+                          <p className="text-sm font-bold text-slate-900 dark:text-white">
                             {(item.quantity * item.price).toLocaleString()}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
-                            {item.quantity} x {item.price.toLocaleString()} MMK
+                          <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                            {item.quantity} x {item.price.toLocaleString()} {t.currency}
                           </span>
                           <div className="flex-1 border-t border-dotted border-slate-200 dark:border-slate-800" />
                         </div>
@@ -2279,55 +2576,52 @@ export default function App() {
                   </div>
 
                   <div className="space-y-2 mb-6">
-                    <div className="flex justify-between text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                    <div className="flex justify-between text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-widest">
                       <span>{t.subtotal}</span>
-                      <span>{lastSale.totalAmount.toLocaleString()} MMK</span>
+                      <span>{(lastSale.totalAmount + (lastSale.discount || 0) - (lastSale.deliveryFee || 0)).toLocaleString()} {t.currency}</span>
                     </div>
+                    {lastSale.discount && lastSale.discount > 0 ? (
+                      <div className="flex justify-between text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-widest">
+                        <span>{t.discount}</span>
+                        <span>-{lastSale.discount.toLocaleString()} {t.currency}</span>
+                      </div>
+                    ) : null}
+                    {lastSale.deliveryFee && lastSale.deliveryFee > 0 ? (
+                      <div className="flex justify-between text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-widest">
+                        <span>{t.deliveryFee}</span>
+                        <span>+{lastSale.deliveryFee.toLocaleString()} {t.currency}</span>
+                      </div>
+                    ) : null}
                     <div className="h-px bg-slate-900 dark:bg-white" />
                     <div className="flex justify-between items-end">
-                      <span className="text-[10px] font-black text-slate-900 dark:text-white uppercase tracking-[0.2em]">{t.total}</span>
+                      <span className="text-[11px] font-bold text-slate-900 dark:text-white uppercase tracking-[0.2em]">{t.total}</span>
                       <div className="text-right">
-                        <p className="text-2xl font-black text-slate-900 dark:text-white tracking-tighter leading-none">
+                        <p className="text-2xl font-bold text-slate-900 dark:text-white tracking-tighter leading-none">
                           {lastSale.totalAmount.toLocaleString()}
                         </p>
-                        <p className="text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mt-0.5">Kyats Only</p>
+                        <p className="text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-widest mt-0.5">{t.kyatsOnly}</p>
                       </div>
                     </div>
                   </div>
 
-                  <div className="space-y-4 text-center relative z-10">
-                    <div className="flex flex-col items-center gap-3">
-                      <div className="w-full h-12 flex items-center justify-center gap-0.5 opacity-80">
-                        {Array.from({ length: 40 }).map((_, i) => (
-                          <div 
-                            key={i} 
-                            className="bg-slate-900 dark:bg-white" 
-                            style={{ 
-                              width: `${Math.random() * 3 + 1}px`, 
-                              height: `${Math.random() * 20 + 20}px`,
-                              opacity: Math.random() * 0.5 + 0.5
-                            }} 
-                          />
-                        ))}
+                  {receiptSettings.showThankYou && (
+                    <div className="space-y-4 text-center relative z-10 mt-6">
+                      <div className="space-y-1.5 pt-2">
+                        <p className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-widest">{t.thankYou}</p>
                       </div>
-                      <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.4em]">{lastSale.id}</p>
                     </div>
-
-                    <div className="space-y-1">
-                      <p className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-widest">{t.thankYou}</p>
-                      <p className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.3em]">{t.customerCopy}</p>
-                    </div>
-                  </div>
+                  )}
                 </div>
+              </div>
 
-                <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex gap-2">
+              <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex gap-2">
                   <button 
                     onClick={async () => {
                       const content = document.getElementById('receipt-content');
                       if (content) {
                         try {
                           const dataUrl = await htmlToImage.toPng(content, {
-                            pixelRatio: 2,
+                            pixelRatio: 4,
                             backgroundColor: 'white',
                           });
                           const link = document.createElement('a');
@@ -2343,7 +2637,7 @@ export default function App() {
                     className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all"
                   >
                     <Download size={14} />
-                    Save
+                    {t.save}
                   </button>
                   <button 
                     onClick={() => {
@@ -2395,7 +2689,7 @@ export default function App() {
                     }}
                     className="flex-1 py-2.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all"
                   >
-                    <Languages size={14} />
+                    <Printer size={14} />
                     {t.print}
                   </button>
                   <button 
@@ -2426,7 +2720,17 @@ function CartContent({
   t,
   lastSale,
   onViewReceipt,
-  onPrintCart
+  onPrintCart,
+  checkoutDiscount,
+  setCheckoutDiscount,
+  checkoutDeliveryFee,
+  setCheckoutDeliveryFee,
+  checkoutPaymentMethod,
+  setCheckoutPaymentMethod,
+  checkoutCustomerName,
+  setCheckoutCustomerName,
+  checkoutCustomerPhone,
+  setCheckoutCustomerPhone
 }: { 
   cartItems: { product: Product, qty: number }[], 
   cartTotal: number, 
@@ -2437,7 +2741,17 @@ function CartContent({
   t: any,
   lastSale?: Sale | null,
   onViewReceipt?: () => void,
-  onPrintCart?: () => void
+  onPrintCart?: () => void,
+  checkoutDiscount: number,
+  setCheckoutDiscount: (v: number) => void,
+  checkoutDeliveryFee: number,
+  setCheckoutDeliveryFee: (v: number) => void,
+  checkoutPaymentMethod: string,
+  setCheckoutPaymentMethod: (v: string) => void,
+  checkoutCustomerName: string,
+  setCheckoutCustomerName: (v: string) => void,
+  checkoutCustomerPhone: string,
+  setCheckoutCustomerPhone: (v: string) => void
 }) {
   return (
     <div className="flex flex-col h-full bg-slate-50/50 dark:bg-slate-900/50 backdrop-blur-xl">
@@ -2518,41 +2832,113 @@ function CartContent({
         )}
       </div>
 
-      <div className="p-5 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 space-y-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10 relative">
-        <div className="space-y-2">
-          <div className="flex justify-between text-xs font-medium text-slate-500 dark:text-slate-400">
-            <span>{t.subtotal}</span>
-            <span>{cartTotal.toLocaleString()} MMK</span>
+      <div className="bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10 relative flex flex-col shrink-0 max-h-[50vh]">
+        <div className="p-5 pb-2 overflow-y-auto space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">{t.customerName}</label>
+              <input 
+                type="text" 
+                value={checkoutCustomerName}
+                onChange={(e) => setCheckoutCustomerName(e.target.value)}
+                className="w-full px-2 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white"
+                placeholder="Name"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">{t.customerPhone}</label>
+              <input 
+                type="text" 
+                value={checkoutCustomerPhone}
+                onChange={(e) => setCheckoutCustomerPhone(e.target.value)}
+                className="w-full px-2 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white"
+                placeholder="Phone"
+              />
+            </div>
           </div>
-          <div className="flex justify-between text-xs font-medium text-slate-500 dark:text-slate-400">
-            <span>{t.tax} (0%)</span>
-            <span>0 MMK</span>
-          </div>
-          <div className="flex justify-between text-lg font-black text-slate-900 dark:text-white pt-3 border-t border-slate-100 dark:border-slate-800">
-            <span>{t.total}</span>
-            <span>{cartTotal.toLocaleString()} MMK</span>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">{t.paymentMethod}</label>
+              <select 
+                value={checkoutPaymentMethod}
+                onChange={(e) => setCheckoutPaymentMethod(e.target.value)}
+                className="w-full px-2 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white"
+              >
+                <option value="Cash">{t.cash}</option>
+                <option value="KPay">{t.kpay}</option>
+                <option value="WavePay">{t.wavepay}</option>
+                <option value="Bank Transfer">{t.bankTransfer}</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">{t.discount}</label>
+              <input 
+                type="number" 
+                min="0"
+                value={checkoutDiscount || ''}
+                onChange={(e) => setCheckoutDiscount(Number(e.target.value))}
+                className="w-full px-2 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white"
+                placeholder="0"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">{t.deliveryFee}</label>
+              <input 
+                type="number" 
+                min="0"
+                value={checkoutDeliveryFee || ''}
+                onChange={(e) => setCheckoutDeliveryFee(Number(e.target.value))}
+                className="w-full px-2 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none text-slate-900 dark:text-white"
+                placeholder="0"
+              />
+            </div>
           </div>
         </div>
-        <div className="flex gap-2">
-          {onPrintCart && (
+
+        <div className="px-5 pb-5 pt-2 space-y-4 shrink-0">
+          <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex justify-between text-xs font-medium text-slate-500 dark:text-slate-400">
+              <span>{t.subtotal}</span>
+              <span>{cartTotal.toLocaleString()} MMK</span>
+            </div>
+            {checkoutDiscount > 0 && (
+              <div className="flex justify-between text-xs font-bold text-rose-500 dark:text-rose-400">
+                <span>{t.discount}</span>
+                <span>-{checkoutDiscount.toLocaleString()} MMK</span>
+              </div>
+            )}
+            {checkoutDeliveryFee > 0 && (
+              <div className="flex justify-between text-xs font-bold text-slate-600 dark:text-slate-400">
+                <span>{t.deliveryFee}</span>
+                <span>+{checkoutDeliveryFee.toLocaleString()} MMK</span>
+              </div>
+            )}
+            <div className="flex justify-between text-lg font-black text-slate-900 dark:text-white pt-2 border-t border-slate-100 dark:border-slate-800">
+              <span>{t.total}</span>
+              <span>{(Math.max(0, cartTotal - checkoutDiscount) + checkoutDeliveryFee).toLocaleString()} MMK</span>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            {onPrintCart && (
+              <button 
+                onClick={onPrintCart}
+                disabled={cartItems.length === 0}
+                className="px-4 py-3.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 border border-slate-200 dark:border-slate-700"
+                title="View/Save Draft Receipt"
+              >
+                <FileText size={18} />
+                <span className="hidden sm:inline">Receipt</span>
+              </button>
+            )}
             <button 
-              onClick={onPrintCart}
+              onClick={onCheckout}
               disabled={cartItems.length === 0}
-              className="px-4 py-3.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 border border-slate-200 dark:border-slate-700"
-              title="View/Save Draft Receipt"
+              className="flex-1 py-3.5 bg-slate-800 text-white rounded-xl font-bold text-sm hover:bg-slate-700 hover:shadow-lg hover:shadow-slate-500/30 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
             >
-              <FileText size={18} />
-              <span className="hidden sm:inline">Receipt</span>
+              {t.checkout}
+              <ArrowRight size={18} />
             </button>
-          )}
-          <button 
-            onClick={onCheckout}
-            disabled={cartItems.length === 0}
-            className="flex-1 py-3.5 bg-slate-800 text-white rounded-xl font-bold text-sm hover:bg-slate-700 hover:shadow-lg hover:shadow-slate-500/30 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
-          >
-            {t.checkout}
-            <ArrowRight size={18} />
-          </button>
+          </div>
         </div>
       </div>
     </div>
